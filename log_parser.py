@@ -1,5 +1,4 @@
-import argparse
-import datetime
+from datetime import datetime, timedelta, timezone
 import polars as pl
 
 
@@ -30,12 +29,21 @@ class LogParser:
             separator=" ",
             new_columns=["timestamp", "source_host", "target_host"],
         )
-        return df_log_file
+
+        """
+        Add new column 'connected_at' transforming the timestamp to datetime to
+        make it easy filter by dates.
+        """
+        df_logs_with_datetime = df_log_file.with_columns(
+            pl.from_epoch("timestamp", time_unit="ms").alias("connected_at")
+        )
+
+        return df_logs_with_datetime
 
     def filter_connections_by_target_host_and_time_range(
         self,
-        init_datetime: datetime.datetime,
-        end_datetime: datetime.datetime,
+        init_datetime: datetime,
+        end_datetime: datetime,
         hostname: str,
     ) -> pl.DataFrame:
         """
@@ -51,62 +59,55 @@ class LogParser:
             pl.DataFrame: A polars DataFrame containing the 'source_hosts' connected to
             the 'target_host' within the specified given period.
         """
-        df_with_datetime = self.df.with_columns(
-            pl.from_epoch("timestamp", time_unit="ms").alias("connected_at")
-        )
-        result = df_with_datetime.filter(
+        result = self.df.filter(
             (pl.col("connected_at").is_between(init_datetime, end_datetime)) &
             (pl.col("target_host") == hostname)
         )
         return result.select("source_host", "target_host", "connected_at").collect()
 
+    def get_period_datetime(self, period_in_minutes: int) -> datetime:
+        return datetime.now(timezone.utc) - timedelta(minutes=period_in_minutes)
 
-def parse_datetime(datetime_str: str) -> datetime.datetime:
-    """
-    Parses a datetime string into a datetime.datetime object.
+    def get_hostames_connected_to_target_host(
+        self, target_host: str, period_to_seek_logs: datetime
+    ) -> pl.DataFrame:
 
-    Args:
-        datetime_str (str): The datetime string in format "YYYY-MM-DD HH:MM:SS.f".
+        df_logs_into_period = self.df.filter(
+            pl.col("connected_at") >= period_to_seek_logs.replace(tzinfo=None)
+        )
 
-    Returns:
-        datetime.datetime: A datetime object representing the parsed datetime.
-    """
-    return datetime.datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S.%f")
+        df_list_hosts_connected_to = df_logs_into_period\
+            .filter(pl.col("target_host") == target_host)\
+                .sort(["source_host"], descending=False)
 
+        return df_list_hosts_connected_to.select(pl.col('source_host')).collect()
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Parse log files and filter connections."
-    )
-    parser.add_argument("--file_path", type=str, help="Path to the log file")
-    parser.add_argument(
-        "--init_datetime",
-        type=parse_datetime,
-        help='Initial datetime in format "YYYY-MM-DD HH:MM:SS.f"',
-    )
-    parser.add_argument(
-        "--end_datetime",
-        type=parse_datetime,
-        help='End datetime in format "YYYY-MM-DD HH:MM:SS.f"',
-    )
-    parser.add_argument("--hostname", type=str, help="Hostname to filter connections")
+    def get_hostames_received_connections_from_source_host(
+        self, source_host: str, period_to_seek_logs: datetime
+    ) -> pl.DataFrame:
 
-    args = parser.parse_args()
+        df_logs_into_period = self.df.filter(
+            pl.col("connected_at") >= period_to_seek_logs.replace(tzinfo=None)
+        )
 
-    if not (args.init_datetime and args.end_datetime and args.hostname):
-        print("Please provide init_datetime, end_datetime, and hostname.")
-        return
+        df_list_hosts_connected_from = df_logs_into_period\
+            .filter(pl.col("source_host") == source_host)\
+                .sort(["target_host"], descending=False)
 
-    log_parser = LogParser(args.file_path)
-    connected_hosts = log_parser.filter_connections_by_target_host_and_time_range(
-        args.init_datetime, args.end_datetime, args.hostname
-    )
+        return df_list_hosts_connected_from.select(pl.col('target_host')).collect()
 
-    print(
-        f"Hostnames connected to '{args.hostname}' during the given period: {args.init_datetime} - {args.end_datetime}:"
-    )
-    print(connected_hosts)
+    def get_hostames_with_more_connections_within_period(
+        self, period_to_seek_logs: datetime
+    ) -> pl.DataFrame:
 
+        df_logs_into_period = self.df.filter(
+            pl.col("connected_at") >= period_to_seek_logs.replace(tzinfo=None)
+        )
 
-if __name__ == "__main__":
-    main()
+        df_host_more_connections = df_logs_into_period.groupby(
+            pl.col("source_host"))\
+                .agg(pl.count().alias("max_connections"))\
+                    .sort(["source_host", "max_connections"], descending=[False, True])\
+                        .limit(1)
+
+        return df_host_more_connections.collect()
