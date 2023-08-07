@@ -1,5 +1,0 @@
-./logs_directory/input-file-10000-test.txt
-./logs_directory/input-file-10000-test copy 4.txt
-./logs_directory/input-file-10000-test copy 3.txt
-./logs_directory/input-file-10000-test copy 2.txt
-./logs_directory/input-file-10000-test copy.txt
