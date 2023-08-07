@@ -71,7 +71,7 @@ def get_insights_from_log_file(log_filename: str):
         )
     )
     logging.info(
-        f"A list of hostnames connected from {HOSTNAME_CONNECTED_TO} \
+        f"A list of hostnames connected from {HOSTNAME_CONNECTED_FROM} \
         host during the last {PERIOD_IN_MINUTES_TO_SEEK_LOGS} minutes: {list_hosts_connected_from}"
     )
 
